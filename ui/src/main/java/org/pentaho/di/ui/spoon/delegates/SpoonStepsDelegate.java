@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -48,7 +48,6 @@ import org.pentaho.di.trans.step.StepMeta;
 import org.pentaho.di.trans.step.StepMetaInterface;
 import org.pentaho.di.trans.step.StepPartitioningMeta;
 import org.pentaho.di.ui.core.dialog.ErrorDialog;
-import org.pentaho.di.ui.core.gui.GUIResource;
 import org.pentaho.di.ui.spoon.Spoon;
 import org.pentaho.di.ui.trans.step.StepErrorMetaDialog;
 
@@ -104,15 +103,6 @@ public class SpoonStepsDelegate extends SpoonDelegate {
     }
   }
 
-  public void clipStep( StepMeta stepMeta ) {
-    try {
-      String xml = stepMeta.getXML();
-      GUIResource.getInstance().toClipboard( xml );
-    } catch ( Exception ex ) {
-      new ErrorDialog( spoon.getShell(), "Error", "Error encoding to XML", ex );
-    }
-  }
-
   public String editStep( TransMeta transMeta, StepMeta stepMeta ) {
     boolean refresh = false;
     String stepname = null;
@@ -162,6 +152,7 @@ public class SpoonStepsDelegate extends SpoonDelegate {
 
         StepMeta newStepMeta = (StepMeta) stepMeta.clone();
         newStepMeta.setName( stepname );
+        transMeta.clearCaches();
         transMeta.notifyAllListeners( stepMeta, newStepMeta );
         stepMeta.setName( stepname );
 
@@ -211,7 +202,7 @@ public class SpoonStepsDelegate extends SpoonDelegate {
     }
 
     // Hops belonging to the deleting steps are placed in a single transaction and removed.
-    List<TransHopMeta> transHops = new ArrayList<TransHopMeta>();
+    List<TransHopMeta> transHops = new ArrayList<>();
     int[] hopIndexes = new int[transformation.nrTransHops()];
     int hopIndex = 0;
     for ( int i = transformation.nrTransHops() - 1; i >= 0; i-- ) {
@@ -259,7 +250,7 @@ public class SpoonStepsDelegate extends SpoonDelegate {
     String dialogClassName = plugin.getClassMap().get( StepDialogInterface.class );
     if ( dialogClassName == null ) {
       // try the deprecated way
-      log.logDebug( "Use of StepMetaInterface#getDialogClassName is deprecated, use StepDialog annotation instead." );
+      log.logDebug( "Use of StepMetaInterface#getDialogClassName is deprecated, use PluginDialog annotation instead." );
       dialogClassName = stepMeta.getDialogClassName();
     }
 
@@ -273,7 +264,7 @@ public class SpoonStepsDelegate extends SpoonDelegate {
         Class<?>[] sig = new Class<?>[] { Shell.class, StepMetaInterface.class, TransMeta.class, String.class };
         Method method = stepMeta.getClass().getDeclaredMethod( "getDialog", sig );
         if ( method != null ) {
-          log.logDebug( "Use of StepMetaInterface#getDialog is deprecated, use StepDialog annotation instead." );
+          log.logDebug( "Use of StepMetaInterface#getDialog is deprecated, use PluginDialog annotation instead." );
           return (StepDialogInterface) method.invoke( stepMeta, paramArgs );
         }
       } catch ( Throwable ignored ) { }

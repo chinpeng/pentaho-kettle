@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -39,13 +39,10 @@ import org.pentaho.di.trans.step.StepDataInterface;
 import org.pentaho.di.trans.step.StepMeta;
 import org.pentaho.di.trans.step.StepMetaInterface;
 import org.pentaho.di.trans.step.StepStatus;
-import org.pentaho.di.trans.steps.transexecutor.TransExecutorData;
 import org.pentaho.di.trans.steps.transexecutor.TransExecutorMeta;
 import org.pentaho.di.trans.steps.transexecutor.TransExecutorParameters;
 import org.pentaho.di.trans.streaming.api.StreamSource;
 import org.pentaho.di.trans.streaming.api.StreamWindow;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -57,7 +54,6 @@ public class BaseStreamStep extends BaseStep {
   private static final Class<?> PKG = BaseStreamStep.class;
   private BaseStreamStepMeta stepMeta;
 
-  protected final Logger logger = LoggerFactory.getLogger( getClass() );
   protected SubtransExecutor subtransExecutor;
   protected StreamWindow<List<Object>, Result> window;
   protected StreamSource<List<Object>> source;
@@ -73,18 +69,19 @@ public class BaseStreamStep extends BaseStep {
     stepMeta.setParentStepMeta( getStepMeta() );
     stepMeta.setFileName( stepMeta.getTransformationPath() );
 
+
     boolean superInit = super.init( stepMetaInterface, stepDataInterface );
 
     try {
       TransMeta transMeta = TransExecutorMeta
         .loadMappingMeta( stepMeta, getTransMeta().getRepository(), getTransMeta().getMetaStore(),
           getParentVariableSpace() );
-      subtransExecutor = new SubtransExecutor(
+      subtransExecutor = new SubtransExecutor( getStepname(),
         getTrans(), transMeta, true,
-        new TransExecutorData(), new TransExecutorParameters() );
+        new TransExecutorParameters(), environmentSubstitute( stepMeta.getSubStep() ) );
 
     } catch ( KettleException e ) {
-      logger.error( e.getLocalizedMessage(), e );
+      log.logError( e.getLocalizedMessage(), e );
       return false;
     }
 
@@ -104,6 +101,12 @@ public class BaseStreamStep extends BaseStep {
   }
 
 
+  @Override public void setOutputDone() {
+    if ( !safeStopped.get() ) {
+      super.setOutputDone();
+    }
+  }
+
   @Override public boolean processRow( StepMetaInterface smi, StepDataInterface sdi ) throws KettleException {
     Preconditions.checkArgument( first,
       BaseMessages.getString( PKG, "BaseStreamStep.ProcessRowsError" ) );
@@ -112,22 +115,33 @@ public class BaseStreamStep extends BaseStep {
 
     source.open();
 
-    bufferStream().forEach( result -> putRows( result.getRows() ) );
-    stopAll();
+    bufferStream().forEach( result -> {
+      if ( result.isSafeStop() ) {
+        getTrans().safeStop();
+      }
+
+      putRows( result.getRows() );
+    } );
+    super.setOutputDone();
+
+    // Needed for when an Abort Step is used.
+    source.close();
     return false;
   }
 
   private Iterable<Result> bufferStream() {
-    return window.buffer( source.rows() );
+    return window.buffer( source.observable() );
   }
 
   @Override
   public void stopRunning( StepMetaInterface stepMetaInterface, StepDataInterface stepDataInterface )
     throws KettleException {
+    if ( !safeStopped.get() ) {
+      subtransExecutor.stop();
+    }
     if ( source != null ) {
       source.close();
     }
-    subtransExecutor.stop();
     super.stopRunning( stepMetaInterface, stepDataInterface );
   }
 
@@ -146,6 +160,9 @@ public class BaseStreamStep extends BaseStep {
   }
 
   private void putRows( List<RowMetaAndData> rows ) {
+    if ( isStopped() && !safeStopped.get() ) {
+      return;
+    }
     rows.forEach( row -> {
       try {
         putRow( row.getRowMeta(), row.getData() );

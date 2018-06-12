@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -27,14 +27,18 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.ClassRule;
 import org.junit.Test;
 import org.mockito.Mockito;
+import org.mockito.Spy;
 import org.owasp.encoder.Encode;
 import org.pentaho.di.core.Const;
+import org.pentaho.di.core.database.BaseDatabaseMeta;
 import org.pentaho.di.core.database.DatabaseInterface;
 import org.pentaho.di.core.database.DatabaseMeta;
 import org.pentaho.di.core.database.MySQLDatabaseMeta;
 import org.pentaho.di.core.database.NetezzaDatabaseMeta;
+import org.pentaho.di.core.database.PostgreSQLDatabaseMeta;
 import org.pentaho.di.core.database.Vertica5DatabaseMeta;
 import org.pentaho.di.core.exception.KettleDatabaseException;
 import org.pentaho.di.core.exception.KettleException;
@@ -50,6 +54,8 @@ import org.pentaho.di.core.plugins.PluginRegistry;
 import org.pentaho.di.core.row.ValueMetaInterface;
 import org.pentaho.di.core.xml.XMLHandler;
 import org.pentaho.di.i18n.BaseMessages;
+import org.pentaho.di.junit.rules.RestorePDIEnvironment;
+import org.w3c.dom.Node;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -75,27 +81,36 @@ import java.util.GregorianCalendar;
 import java.util.List;
 import java.util.TimeZone;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertArrayEquals;
+import static org.mockito.Matchers.anyInt;
+import static org.mockito.Matchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 
 public class ValueMetaBaseTest {
+  @ClassRule public static RestorePDIEnvironment env = new RestorePDIEnvironment();
 
   private static final String TEST_NAME = "TEST_NAME";
   private static final String LOG_FIELD = "LOG_FIELD";
   public static final int MAX_TEXT_FIELD_LEN = 5;
 
   // Get PKG from class under test
-  private static Class<?> PKG = ( new ValueMetaBase() {
-    public Class<?> getPackage() {
-      return PKG;
-    }
-  } ).getPackage();
+  private Class<?> PKG = ValueMetaBase.PKG;
   private StoreLoggingEventListener listener;
+
+  @Spy
+  private DatabaseMeta databaseMetaSpy = new DatabaseMeta();
+  private PreparedStatement preparedStatementMock = mock( PreparedStatement.class );
 
   @BeforeClass
   public static void setUpBeforeClass() throws KettleException {
     PluginRegistry.addPluginType( ValueMetaPluginType.getInstance() );
     PluginRegistry.addPluginType( DatabasePluginType.getInstance() );
-    PluginRegistry.init( true );
+    PluginRegistry.init();
     KettleLogStore.init();
   }
 
@@ -155,8 +170,8 @@ public class ValueMetaBaseTest {
   public void testGetValueFromSqlTypeNetezza() throws Exception {
     ValueMetaBase obj = new ValueMetaBase();
     DatabaseInterface databaseInterface = new NetezzaDatabaseMeta();
-    ResultSet resultSet = Mockito.mock( ResultSet.class );
-    ResultSetMetaData metaData = Mockito.mock( ResultSetMetaData.class );
+    ResultSet resultSet = mock( ResultSet.class );
+    ResultSetMetaData metaData = mock( ResultSetMetaData.class );
     Mockito.when( resultSet.getMetaData() ).thenReturn( metaData );
 
     Mockito.when( metaData.getColumnType( 1 ) ).thenReturn( Types.DATE );
@@ -241,8 +256,8 @@ public class ValueMetaBaseTest {
     DatabaseInterface databaseInterface = new Vertica5DatabaseMeta();
     dbMeta.setDatabaseInterface( databaseInterface );
 
-    ResultSet resultSet = Mockito.mock( ResultSet.class );
-    ResultSetMetaData metaData = Mockito.mock( ResultSetMetaData.class );
+    ResultSet resultSet = mock( ResultSet.class );
+    ResultSetMetaData metaData = mock( ResultSetMetaData.class );
 
     Mockito.when( resultSet.getMetaData() ).thenReturn( metaData );
     Mockito.when( metaData.getColumnType( binaryColumnIndex ) ).thenReturn( Types.BINARY );
@@ -279,11 +294,11 @@ public class ValueMetaBaseTest {
 
     ValueMetaBase valueMetaBase = new ValueMetaBase(),
       valueMetaBaseSpy = Mockito.spy( valueMetaBase );
-    DatabaseMeta dbMeta = Mockito.mock( DatabaseMeta.class );
-    DatabaseInterface databaseInterface = Mockito.mock( DatabaseInterface.class );
+    DatabaseMeta dbMeta = mock( DatabaseMeta.class );
+    DatabaseInterface databaseInterface = mock( DatabaseInterface.class );
     Mockito.doReturn( databaseInterface ).when( dbMeta ).getDatabaseInterface();
 
-    ResultSetMetaData metaData = Mockito.mock( ResultSetMetaData.class );
+    ResultSetMetaData metaData = mock( ResultSetMetaData.class );
     valueMetaBaseSpy.getValueFromSQLType( dbMeta, TEST_NAME, metaData, varbinaryColumnIndex, false, false );
 
     Mockito.verify( databaseInterface, Mockito.times( 1 ) ).customizeValueFromSQLType( Mockito.any( ValueMetaInterface.class ),
@@ -293,9 +308,9 @@ public class ValueMetaBaseTest {
   @Test
   public void testVerticaTimeType() throws Exception {
     // PDI-12244
-    ResultSet resultSet = Mockito.mock( ResultSet.class );
-    ResultSetMetaData metaData = Mockito.mock( ResultSetMetaData.class );
-    ValueMetaInterface valueMetaInterface = Mockito.mock( ValueMetaInternetAddress.class );
+    ResultSet resultSet = mock( ResultSet.class );
+    ResultSetMetaData metaData = mock( ResultSetMetaData.class );
+    ValueMetaInterface valueMetaInterface = mock( ValueMetaInternetAddress.class );
 
     Mockito.when( resultSet.getMetaData() ).thenReturn( metaData );
     Mockito.when( metaData.getColumnType( 1 ) ).thenReturn( Types.TIME );
@@ -672,8 +687,8 @@ public class ValueMetaBaseTest {
   public void testSetPreparedStatementStringValueDontLogTruncated() throws KettleDatabaseException {
     ValueMetaBase valueMetaString = new ValueMetaBase( "LOG_FIELD", ValueMetaInterface.TYPE_STRING,  LOG_FIELD.length(), 0 );
 
-    DatabaseMeta databaseMeta = Mockito.mock( DatabaseMeta.class );
-    PreparedStatement preparedStatement = Mockito.mock( PreparedStatement.class );
+    DatabaseMeta databaseMeta = mock( DatabaseMeta.class );
+    PreparedStatement preparedStatement = mock( PreparedStatement.class );
     Mockito.when( databaseMeta.getMaxTextFieldLength() ).thenReturn( LOG_FIELD.length() );
     List<KettleLoggingEvent> events = listener.getEvents();
     assertEquals( 0, events.size() );
@@ -686,16 +701,10 @@ public class ValueMetaBaseTest {
 
   @Test
   public void testSetPreparedStatementStringValueLogTruncated() throws KettleDatabaseException {
-    ValueMetaBase valueMetaString = new ValueMetaBase( "LOG_FIELD", ValueMetaInterface.TYPE_STRING,  LOG_FIELD.length(), 0 );
-
-    DatabaseMeta databaseMeta = Mockito.mock( DatabaseMeta.class );
-    PreparedStatement preparedStatement = Mockito.mock( PreparedStatement.class );
-    Mockito.when( databaseMeta.getMaxTextFieldLength() ).thenReturn( MAX_TEXT_FIELD_LEN );
     List<KettleLoggingEvent> events = listener.getEvents();
     assertEquals( 0, events.size() );
-
-    valueMetaString.setPreparedStatementValue( databaseMeta, preparedStatement, 0, LOG_FIELD );
-
+    BaseDatabaseMeta databaseMeta = mock( BaseDatabaseMeta.class );
+    initValueMeta( databaseMeta, MAX_TEXT_FIELD_LEN );
     //check that truncated string was logged
     assertEquals( 1, events.size() );
   }
@@ -857,11 +866,6 @@ public class ValueMetaBaseTest {
   @Test
   public void testConvertBigNumberToBoolean() {
     ValueMetaBase vmb = new ValueMetaBase();
-    System.out.println( vmb.convertBigNumberToBoolean( new BigDecimal( "-234" ) ) );
-    System.out.println( vmb.convertBigNumberToBoolean( new BigDecimal( "234" ) ) );
-    System.out.println( vmb.convertBigNumberToBoolean( new BigDecimal( "0" ) ) );
-    System.out.println( vmb.convertBigNumberToBoolean( new BigDecimal( "1.7976E308" ) ) );
-
     Assert.assertTrue( vmb.convertBigNumberToBoolean( new BigDecimal( "-234" ) ) );
     Assert.assertTrue( vmb.convertBigNumberToBoolean( new BigDecimal( "234" ) ) );
     Assert.assertFalse( vmb.convertBigNumberToBoolean( new BigDecimal( "0" ) ) );
@@ -879,8 +883,8 @@ public class ValueMetaBaseTest {
     DatabaseInterface databaseInterface = new MySQLDatabaseMeta();
     dbMeta.setDatabaseInterface( databaseInterface );
 
-    ResultSet resultSet = Mockito.mock( ResultSet.class );
-    ResultSetMetaData metaData = Mockito.mock( ResultSetMetaData.class );
+    ResultSet resultSet = mock( ResultSet.class );
+    ResultSetMetaData metaData = mock( ResultSetMetaData.class );
 
     Mockito.when( resultSet.getMetaData() ).thenReturn( metaData );
     Mockito.when( metaData.getColumnType( binaryColumnIndex ) ).thenReturn( Types.LONGVARBINARY );
@@ -889,6 +893,99 @@ public class ValueMetaBaseTest {
       valueMetaBase.getValueFromSQLType( dbMeta, TEST_NAME, metaData, binaryColumnIndex, false, false );
     Assert.assertEquals( ValueMetaInterface.TYPE_BINARY, binaryValueMeta.getType() );
     Assert.assertTrue( binaryValueMeta.isBinary() );
+  }
+
+  @Test
+  public void testGetValueFromNode() throws Exception {
+
+    ValueMetaBase valueMetaBase = null;
+    Node xmlNode = null;
+
+    valueMetaBase = new ValueMetaBase( "test", ValueMetaInterface.TYPE_STRING );
+    xmlNode = XMLHandler.loadXMLString( "<value-data>String val</value-data>" ).getFirstChild();
+    Assert.assertEquals( "String val", valueMetaBase.getValue( xmlNode ) );
+
+    valueMetaBase = new ValueMetaBase( "test", ValueMetaInterface.TYPE_NUMBER );
+    xmlNode = XMLHandler.loadXMLString( "<value-data>689.2</value-data>" ).getFirstChild();
+    Assert.assertEquals( 689.2, valueMetaBase.getValue( xmlNode ) );
+
+    valueMetaBase = new ValueMetaBase( "test", ValueMetaInterface.TYPE_NUMBER );
+    xmlNode = XMLHandler.loadXMLString( "<value-data>689.2</value-data>" ).getFirstChild();
+    Assert.assertEquals( 689.2, valueMetaBase.getValue( xmlNode ) );
+
+    valueMetaBase = new ValueMetaBase( "test", ValueMetaInterface.TYPE_INTEGER );
+    xmlNode = XMLHandler.loadXMLString( "<value-data>68933</value-data>" ).getFirstChild();
+    Assert.assertEquals( 68933l, valueMetaBase.getValue( xmlNode ) );
+
+    valueMetaBase = new ValueMetaBase( "test", ValueMetaInterface.TYPE_DATE );
+    xmlNode = XMLHandler.loadXMLString( "<value-data>2017/11/27 08:47:10.000</value-data>" ).getFirstChild();
+    Assert.assertEquals( XMLHandler.stringToDate( "2017/11/27 08:47:10.000" ), valueMetaBase.getValue( xmlNode ) );
+
+    valueMetaBase = new ValueMetaBase( "test", ValueMetaInterface.TYPE_TIMESTAMP );
+    xmlNode = XMLHandler.loadXMLString( "<value-data>2017/11/27 08:47:10.123456789</value-data>" ).getFirstChild();
+    Assert.assertEquals( XMLHandler.stringToTimestamp( "2017/11/27 08:47:10.123456789" ), valueMetaBase.getValue( xmlNode ) );
+
+    valueMetaBase = new ValueMetaBase( "test", ValueMetaInterface.TYPE_BOOLEAN );
+    xmlNode = XMLHandler.loadXMLString( "<value-data>Y</value-data>" ).getFirstChild();
+    Assert.assertEquals( true, valueMetaBase.getValue( xmlNode ) );
+
+    valueMetaBase = new ValueMetaBase( "test", ValueMetaInterface.TYPE_BINARY );
+    byte[] bytes = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    String s = XMLHandler.encodeBinaryData( bytes );
+    xmlNode = XMLHandler.loadXMLString( "<value-data>test<binary-value>" + s + "</binary-value></value-data>" ).getFirstChild();
+    Assert.assertArrayEquals( bytes, (byte[]) valueMetaBase.getValue( xmlNode ) );
+
+    valueMetaBase = new ValueMetaBase( "test", ValueMetaInterface.TYPE_STRING );
+    xmlNode = XMLHandler.loadXMLString( "<value-data></value-data>" ).getFirstChild();
+    Assert.assertNull( valueMetaBase.getValue( xmlNode ) );
+  }
+
+  @Test( expected = KettleException.class )
+  public void testGetValueUnknownType() throws Exception {
+    ValueMetaBase valueMetaBase = new ValueMetaBase( "test", ValueMetaInterface.TYPE_NONE );
+    valueMetaBase.getValue( XMLHandler.loadXMLString( "<value-data>not empty</value-data>" ).getFirstChild() );
+  }
+
+  @Test
+  public void testConvertStringToTimestampType() throws KettleValueException {
+    String timestampStringRepresentation = "2018/04/11 16:45:15.000000000";
+    Timestamp expectedTimestamp = Timestamp.valueOf( "2018-04-11 16:45:15.000000000" );
+
+    ValueMetaBase base = new ValueMetaString( "ValueMetaStringColumn" );
+    base.setConversionMetadata( new ValueMetaTimestamp( "ValueMetaTimestamp" ) );
+    Timestamp timestamp = (Timestamp) base.convertDataUsingConversionMetaData( timestampStringRepresentation );
+    assertEquals( expectedTimestamp, timestamp );
+  }
+
+  /**
+   * The only limitation for MySQLDatabaseMeta.getMaxTextFieldLength is a diapason of returned type: int.
+   * So that there is only one test case for MySQL and two for Postgres
+   *
+   * @throws Exception
+   */
+
+  @Test
+  public void test_Pdi_17126_postgres() throws Exception {
+    initValueMeta( new PostgreSQLDatabaseMeta(), DatabaseMeta.CLOB_LENGTH );
+    Mockito.verify( preparedStatementMock, times( 1 ) ).setString( anyInt(), anyString() );
+  }
+
+  @Test
+  public void test_Pdi_17126_postgres_truncate() throws Exception {
+    initValueMeta( new PostgreSQLDatabaseMeta(), MAX_TEXT_FIELD_LEN );
+    Mockito.verify( preparedStatementMock, Mockito.never() ).setString( anyInt(), anyString() );
+  }
+
+  @Test
+  public void test_Pdi_17126_mysql() throws Exception {
+    initValueMeta( new MySQLDatabaseMeta(), DatabaseMeta.CLOB_LENGTH );
+    Mockito.verify( preparedStatementMock, times( 1 ) ).setString( anyInt(), anyString() );
+  }
+
+  private void initValueMeta( BaseDatabaseMeta dbMeta, int fileSize ) throws KettleDatabaseException {
+    ValueMetaBase valueMetaString = new ValueMetaBase( LOG_FIELD, ValueMetaInterface.TYPE_STRING, fileSize, 0 );
+    databaseMetaSpy.setDatabaseInterface( dbMeta );
+    valueMetaString.setPreparedStatementValue( databaseMetaSpy, preparedStatementMock, 0, LOG_FIELD );
   }
 
 }

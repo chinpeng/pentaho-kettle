@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -544,6 +544,7 @@ public class RowMeta implements RowMetaInterface {
           // but it makes no harm as they will put the same value,
           // because valueMetaList is defended from modifications by read lock
           cache.storeMapping( valueName, index );
+          needRealClone = null;
         }
       }
       if ( index == null ) {
@@ -1083,7 +1084,7 @@ public class RowMeta implements RowMetaInterface {
    */
   @Override
   public int hashCode( Object[] rowData ) throws KettleValueException {
-    return Arrays.hashCode( rowData );
+    return Arrays.deepHashCode( rowData );
   }
 
   /**
@@ -1200,7 +1201,11 @@ public class RowMeta implements RowMetaInterface {
 
     int nrValues = XMLHandler.countNodes( node, ValueMeta.XML_META_TAG );
     for ( int i = 0; i < nrValues; i++ ) {
-      addValueMeta( new ValueMeta( XMLHandler.getSubNodeByNr( node, ValueMeta.XML_META_TAG, i ) ) );
+      ValueMeta valueMetaSource = new ValueMeta( XMLHandler.getSubNodeByNr( node, ValueMeta.XML_META_TAG, i ) );
+      ValueMetaInterface valueMeta = ValueMetaFactory.createValueMeta( valueMetaSource.getName(), valueMetaSource.getType(),
+        valueMetaSource.getLength(), valueMetaSource.getPrecision() );
+      ValueMetaFactory.cloneInfo( valueMetaSource, valueMeta );
+      addValueMeta( valueMeta );
     }
   }
 

@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -56,13 +56,12 @@ public class FixedTimeStreamWindow<I extends List> implements StreamWindow<I, Re
     this.batchSize = batchSize;
   }
 
-  @Override public Iterable<Result> buffer( Iterable<I> rowIterator ) {
-    Observable<I> observable = Observable.fromIterable( rowIterator )
-      .subscribeOn( Schedulers.newThread() );
+  @Override public Iterable<Result> buffer( Observable<I> observable ) {
     Observable<List<I>> buffer = millis > 0
       ? batchSize > 0 ? observable.buffer( millis, MILLISECONDS, batchSize ) : observable.buffer( millis, MILLISECONDS )
       : observable.buffer( batchSize );
     return buffer
+      .observeOn( Schedulers.io() )
       .filter( list -> !list.isEmpty() )
       .map( this::sendBufferToSubtrans )
       .takeWhile( result -> result.getNrErrors() == 0 )
@@ -75,12 +74,7 @@ public class FixedTimeStreamWindow<I extends List> implements StreamWindow<I, Re
       .map( objects -> new RowMetaAndData( rowMeta, objects ) )
       .collect( Collectors.toList() );
     Optional<Result> optionalRes = subtransExecutor.execute( rows );
-    Result result = optionalRes.orElseThrow( () -> new KettleException( "Failed to get results" ) );
-    // Set rows to the input rows, rather than the transformed rows.
-    // In the future, may want to allow the subtrans result target to be specified.
-    result.setRows( rows );
-
-    return result;
+    return optionalRes.orElse( new Result( ) );
   }
 
 }

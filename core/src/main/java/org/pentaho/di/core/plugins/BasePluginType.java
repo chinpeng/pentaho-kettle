@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -23,6 +23,9 @@
 package org.pentaho.di.core.plugins;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.InputStream;
 import java.lang.annotation.Annotation;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -33,14 +36,18 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Hashtable;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import com.google.common.annotations.VisibleForTesting;
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.vfs2.FileObject;
 import org.apache.commons.vfs2.FileSelectInfo;
 import org.apache.commons.vfs2.FileSelector;
 import org.pentaho.di.core.Const;
+import org.pentaho.di.core.exception.KettleXMLException;
 import org.pentaho.di.core.util.Utils;
 import org.pentaho.di.core.exception.KettlePluginException;
 import org.pentaho.di.core.logging.DefaultLogLevel;
@@ -49,8 +56,9 @@ import org.pentaho.di.core.logging.LogLevel;
 import org.pentaho.di.core.vfs.KettleVFS;
 import org.pentaho.di.core.xml.XMLHandler;
 import org.pentaho.di.i18n.BaseMessages;
-import org.pentaho.di.i18n.LanguageChoice;
+import org.pentaho.di.i18n.GlobalMessageUtil;
 import org.scannotation.AnnotationDB;
+import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 
 public abstract class BasePluginType implements PluginTypeInterface {
@@ -91,6 +99,60 @@ public abstract class BasePluginType implements PluginTypeInterface {
   }
 
   /**
+   * This method return parameter for registerNatives() method
+   *
+   * @return XML plugin file
+   */
+  protected String getXmlPluginFile() {
+    return null;
+  }
+
+  /**
+   * This method return parameter for registerNatives() method
+   *
+   * @return Alternative XML plugin file
+   */
+  protected String getAlternativePluginFile() {
+    return null;
+  }
+
+  /**
+   * This method return parameter for registerPlugins() method
+   *
+   * @return Main XML tag
+   */
+  protected String getMainTag() {
+    return null;
+  }
+
+  /**
+   * This method return parameter for registerPlugins() method
+   *
+   * @return Subordinate XML tag
+   */
+  protected String getSubTag() {
+    return null;
+  }
+
+  /**
+   * This method return parameter for registerPlugins() method
+   *
+   * @return Path
+   */
+  protected String getPath() {
+    return null;
+  }
+
+  /**
+   * This method return parameter for registerNatives() method
+   *
+   * @return Flag ("return;" or "throw exception")
+   */
+  protected boolean isReturn() {
+    return false;
+  }
+
+  /**
    * this is a utility method for subclasses so they can easily register which folders contain plugins
    *
    * @param xmlSubfolder
@@ -124,7 +186,87 @@ public abstract class BasePluginType implements PluginTypeInterface {
     registerXmlPlugins();
   }
 
-  protected abstract void registerNatives() throws KettlePluginException;
+  protected void registerNatives() throws KettlePluginException {
+    // Scan the native steps...
+    //
+    String xmlFile = getXmlPluginFile();
+    String alternative = null;
+    if ( !Utils.isEmpty( getAlternativePluginFile() ) ) {
+      alternative = getPropertyExternal( getAlternativePluginFile(), null );
+      if ( !Utils.isEmpty( alternative ) ) {
+        xmlFile = alternative;
+      }
+    }
+
+    // Load the plugins for this file...
+    //
+    InputStream inputStream = null;
+    try {
+      inputStream = getResAsStreamExternal( xmlFile );
+      if ( inputStream == null ) {
+        inputStream = getResAsStreamExternal( "/" + xmlFile );
+      }
+
+      if ( !Utils.isEmpty( getAlternativePluginFile() ) ) {
+        // Retry to load a regular file...
+        if ( inputStream == null && !Utils.isEmpty( alternative ) ) {
+          try {
+            inputStream = getFileInputStreamExternal( xmlFile );
+          } catch ( Exception e ) {
+            throw new KettlePluginException( "Unable to load native plugins '" + xmlFile + "'", e );
+          }
+        }
+      }
+
+      if ( inputStream == null ) {
+        if ( isReturn() ) {
+          return;
+        } else {
+          throw new KettlePluginException( "Unable to find native plugins definition file: " + xmlFile );
+        }
+      }
+
+      registerPlugins( inputStream );
+
+    } catch ( KettleXMLException e ) {
+      throw new KettlePluginException( "Unable to read the kettle XML config file: " + xmlFile, e );
+    } finally {
+      IOUtils.closeQuietly( inputStream );
+    }
+  }
+
+  @VisibleForTesting
+  protected String getPropertyExternal( String key, String def ) {
+    return System.getProperty( key, def );
+  }
+
+  @VisibleForTesting
+  protected InputStream getResAsStreamExternal( String name ) {
+    return getClass().getResourceAsStream( name );
+  }
+
+  @VisibleForTesting
+  protected InputStream getFileInputStreamExternal( String name ) throws FileNotFoundException {
+    return new FileInputStream( name );
+  }
+
+  /**
+   * This method registers plugins from the InputStream with the XML Resource
+   *
+   * @param inputStream
+   * @throws KettlePluginException
+   * @throws KettleXMLException
+   */
+  protected void registerPlugins( InputStream inputStream ) throws KettlePluginException, KettleXMLException {
+    Document document = XMLHandler.loadXMLFile( inputStream, null, true, false );
+
+    Node repsNode = XMLHandler.getSubNode( document, getMainTag() );
+    List<Node> repsNodes = XMLHandler.getNodes( repsNode, getSubTag() );
+
+    for ( Node repNode : repsNodes ) {
+      registerPluginFromXmlResource( repNode, getPath(), this.getClass(), true, null );
+    }
+  }
 
   protected abstract void registerXmlPlugins() throws KettlePluginException;
 
@@ -354,6 +496,7 @@ public abstract class BasePluginType implements PluginTypeInterface {
       String documentationUrl = getTagOrAttribute( pluginNode, "documentation_url" );
       String casesUrl = getTagOrAttribute( pluginNode, "cases_url" );
       String forumUrl = getTagOrAttribute( pluginNode, "forum_url" );
+      String suggestedStep = getTagOrAttribute( pluginNode, "suggested_step" );
 
       Node libsnode = XMLHandler.getSubNode( pluginNode, "libraries" );
       int nrlibs = XMLHandler.countNodes( libsnode, "library" );
@@ -375,6 +518,9 @@ public abstract class BasePluginType implements PluginTypeInterface {
       Map<String, String> localDescriptions =
         readPluginLocale( pluginNode, "localized_description", "description" );
       description = getAlternativeTranslation( description, localDescriptions );
+      description += addDeprecation( category );
+
+      suggestedStep = getAlternativeTranslation( suggestedStep, localDescriptions );
 
       Map<String, String> localizedTooltips = readPluginLocale( pluginNode, "localized_tooltip", "tooltip" );
       tooltip = getAlternativeTranslation( tooltip, localizedTooltips );
@@ -412,7 +558,7 @@ public abstract class BasePluginType implements PluginTypeInterface {
         new Plugin(
           id.split( "," ), pluginType, mainClassTypesAnnotation.value(), category, description, tooltip,
           iconFilename, false, nativePlugin, classMap, jarFiles, errorHelpFileFull, pluginFolder,
-          documentationUrl, casesUrl, forumUrl );
+          documentationUrl, casesUrl, forumUrl, suggestedStep );
       registry.registerPlugin( pluginType, pluginInterface );
 
       return pluginInterface;
@@ -445,15 +591,11 @@ public abstract class BasePluginType implements PluginTypeInterface {
     if ( input.startsWith( "i18n" ) ) {
       return getCodedTranslation( input );
     } else {
-      String defLocale = LanguageChoice.getInstance().getDefaultLocale().toString().toLowerCase();
-      String alt = localizedMap.get( defLocale );
-      if ( !Utils.isEmpty( alt ) ) {
-        return alt;
-      }
-      String failoverLocale = LanguageChoice.getInstance().getFailoverLocale().toString().toLowerCase();
-      alt = localizedMap.get( failoverLocale );
-      if ( !Utils.isEmpty( alt ) ) {
-        return alt;
+      for ( final Locale locale : GlobalMessageUtil.getActiveLocales() ) {
+        String alt = localizedMap.get( locale.toString().toLowerCase() );
+        if ( !Utils.isEmpty( alt ) ) {
+          return alt;
+        }
       }
       // Nothing found?
       // Return the original!
@@ -532,6 +674,8 @@ public abstract class BasePluginType implements PluginTypeInterface {
   protected abstract String extractI18nPackageName( java.lang.annotation.Annotation annotation );
 
   protected abstract String extractDocumentationUrl( java.lang.annotation.Annotation annotation );
+
+  protected abstract String extractSuggestedStep( java.lang.annotation.Annotation annotation );
 
   protected abstract String extractCasesUrl( java.lang.annotation.Annotation annotation );
 
@@ -618,7 +762,10 @@ public abstract class BasePluginType implements PluginTypeInterface {
     String documentationUrl = extractDocumentationUrl( annotation );
     String casesUrl = extractCasesUrl( annotation );
     String forumUrl = extractForumUrl( annotation );
+    String suggestedStep = getTranslation( extractSuggestedStep( annotation ), packageName, altPackageName, clazz );
     String classLoaderGroup = extractClassLoaderGroup( annotation );
+
+    name += addDeprecation( category );
 
     Map<Class<?>, String> classMap = new HashMap<>();
 
@@ -632,7 +779,7 @@ public abstract class BasePluginType implements PluginTypeInterface {
       new Plugin(
         ids, this.getClass(), mainType.value(), category, name, description, imageFile, separateClassLoader,
         classLoaderGroup, nativePluginType, classMap, libraries, null, pluginFolder, documentationUrl,
-        casesUrl, forumUrl );
+        casesUrl, forumUrl, suggestedStep );
 
     ParentFirst parentFirstAnnotation = clazz.getAnnotation( ParentFirst.class );
     if ( parentFirstAnnotation != null ) {
@@ -654,4 +801,12 @@ public abstract class BasePluginType implements PluginTypeInterface {
    * @param annotation
    */
   protected abstract void addExtraClasses( Map<Class<?>, String> classMap, Class<?> clazz, Annotation annotation );
+
+  private String addDeprecation( String category ) {
+    String deprecated = BaseMessages.getString( PKG, "PluginRegistry.Category.Deprecated" );
+    if ( deprecated.equals( category )  ) {
+      return " (" + deprecated.toLowerCase() + ")";
+    }
+    return "";
+  }
 }
